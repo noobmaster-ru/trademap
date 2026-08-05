@@ -37,7 +37,6 @@ services:
       TRADEMAP_DOMAIN: ${TRADEMAP_DOMAIN:?укажите TRADEMAP_DOMAIN в .env}
       TRADEMAP_BASICAUTH_USER: ${TRADEMAP_BASICAUTH_USER:?укажите TRADEMAP_BASICAUTH_USER в .env}
       TRADEMAP_BASICAUTH_HASH: ${TRADEMAP_BASICAUTH_HASH:?укажите TRADEMAP_BASICAUTH_HASH в .env}
-      TRADEMAP_ACME_EMAIL: ${TRADEMAP_ACME_EMAIL:-}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

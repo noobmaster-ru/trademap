@@ -142,8 +142,10 @@ TRADEMAP_USERNAME=ваш-email-в-trademap
 TRADEMAP_PASSWORD=ваш-пароль-в-trademap
 
 TRADEMAP_DOMAIN=trademap.example.com
-TRADEMAP_ACME_EMAIL=you@example.com
 ```
+
+> `TRADEMAP_DOMAIN` должен быть **вашим реальным доменом**, а не оставленным
+> из примера `trademap.example.com` — иначе сертификат не выпустится никогда.
 
 Проверить, что хеш дошёл до Caddy целиком:
 
