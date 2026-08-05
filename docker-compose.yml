@@ -1,0 +1,54 @@
+# TradeMap Explorer за Caddy: HTTPS с автоматическим сертификатом Let's Encrypt
+# и базовая авторизация. Наружу торчит только Caddy, само приложение доступно
+# лишь внутри docker-сети.
+#
+# Перед первым запуском заполните .env (см. .env.example и раздел «Деплой» в README).
+
+services:
+  app:
+    build: .
+    image: trademap-explorer
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Пути и режим внутри контейнера задаются здесь, а не в .env,
+      # чтобы локальный запуск через ./run.sh не ломался.
+      TRADEMAP_CACHE_DIR: /data
+      TRADEMAP_ALLOW_BROWSER_LOGIN: "0"
+    volumes:
+      # Токен и кэш справочников переживают пересборку контейнера.
+      - trademap-data:/data
+    # Портов наружу нет: доступ только через Caddy по внутренней сети.
+    expose:
+      - "8765"
+    networks:
+      - web
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # Подставляются из .env: домен и хеш пароля от caddy hash-password.
+      TRADEMAP_DOMAIN: ${TRADEMAP_DOMAIN:?укажите TRADEMAP_DOMAIN в .env}
+      TRADEMAP_BASICAUTH_USER: ${TRADEMAP_BASICAUTH_USER:?укажите TRADEMAP_BASICAUTH_USER в .env}
+      TRADEMAP_BASICAUTH_HASH: ${TRADEMAP_BASICAUTH_HASH:?укажите TRADEMAP_BASICAUTH_HASH в .env}
+      TRADEMAP_ACME_EMAIL: ${TRADEMAP_ACME_EMAIL:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - web
+
+volumes:
+  trademap-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  web:

@@ -1,0 +1,37 @@
+# Caddy сам получает и продлевает сертификат Let's Encrypt для указанного домена.
+# Требование одно: домен должен резолвиться в IP сервера, а порты 80 и 443 быть открыты.
+
+{
+	email {$TRADEMAP_ACME_EMAIL}
+}
+
+{$TRADEMAP_DOMAIN} {
+	# Базовая авторизация закрывает всё приложение целиком.
+	# Хеш пароля генерируется командой: docker run --rm caddy:2-alpine caddy hash-password
+	basic_auth {
+		{$TRADEMAP_BASICAUTH_USER} {$TRADEMAP_BASICAUTH_HASH}
+	}
+
+	reverse_proxy app:8765 {
+		# Выгрузка большого Excel может собираться не одну минуту.
+		transport http {
+			response_header_timeout 10m
+			read_timeout 10m
+		}
+	}
+
+	encode gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "same-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

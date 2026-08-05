@@ -1,0 +1,15 @@
+# Секреты и локальное состояние в образ не попадают.
+.env
+.cache/
+.venv/
+venv/
+
+__pycache__/
+*.pyc
+*.xlsx
+
+.git/
+.gitignore
+.DS_Store
+README.md
+run.sh

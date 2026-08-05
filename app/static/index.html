@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TradeMap Explorer</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%231f4e79'/%3E%3Ctext x='16' y='22' font-family='Helvetica,Arial' font-size='15' font-weight='bold' fill='white' text-anchor='middle'%3ETM%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo">TM</span>
+      <div>
+        <h1>TradeMap Explorer</h1>
+        <p class="muted">Торговая статистика ITC — выборка и выгрузка в Excel</p>
+      </div>
+    </div>
+    <div id="auth-box" class="auth-box">
+      <span id="auth-state" class="badge badge-muted">проверяю вход…</span>
+      <button id="btn-login" class="btn btn-ghost" hidden>Войти</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="grid">
+
+        <div class="field">
+          <label for="frequency">Частота</label>
+          <div class="segmented" id="frequency" role="radiogroup">
+            <button type="button" data-value="monthly" class="active">Месяц</button>
+            <button type="button" data-value="quarterly">Квартал</button>
+            <button type="button" data-value="yearly">Год</button>
+          </div>
+          <p class="hint" id="frequency-hint"></p>
+        </div>
+
+        <div class="field">
+          <label for="tradeFlow">Направление</label>
+          <div class="segmented" id="tradeFlow" role="radiogroup">
+            <button type="button" data-value="I" class="active">Импорт</button>
+            <button type="button" data-value="E">Экспорт</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="output">Что перечислять в строках</label>
+          <div class="segmented" id="output" role="radiogroup">
+            <button type="button" data-value="byPartner" class="active">Партнёры</button>
+            <button type="button" data-value="byProduct">Продукты</button>
+            <button type="button" data-value="byCountry">Страны</button>
+          </div>
+          <p class="hint" id="output-hint"></p>
+        </div>
+
+        <div class="field">
+          <label>Показатель</label>
+          <div class="checks">
+            <label class="check"><input type="checkbox" id="ind-val" checked> Value (стоимость)</label>
+            <label class="check"><input type="checkbox" id="ind-qty" checked> Quantity (объём)</label>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="currency">Валюта</label>
+          <select id="currency">
+            <option value="USD">USD</option>
+            <option value="EUR">EUR</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="directMirror">Источник данных</label>
+          <select id="directMirror">
+            <option value="D">Прямые (отчёт страны)</option>
+            <option value="M">Зеркальные (отчёт партнёров)</option>
+          </select>
+        </div>
+
+        <div class="field" id="hslevel-field">
+          <label for="hsLevel">Детализация HS</label>
+          <select id="hsLevel">
+            <option value="2">2 знака — разделы</option>
+            <option value="4">4 знака — товарные позиции</option>
+            <option value="6" selected>6 знаков — субпозиции</option>
+            <option value="10">национальные коды (требует входа)</option>
+          </select>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel selectors">
+      <div class="picker" id="picker-country" data-kind="country">
+        <div class="picker-head">
+          <label>Страна-репортёр</label>
+          <span class="count" data-count>0 выбрано</span>
+        </div>
+        <input type="search" placeholder="Поиск страны…" data-search autocomplete="off">
+        <div class="chips" data-chips></div>
+        <div class="options" data-options></div>
+      </div>
+
+      <div class="picker" id="picker-product" data-kind="product">
+        <div class="picker-head">
+          <label>Продукт (HS)</label>
+          <span class="count" data-count>0 выбрано</span>
+        </div>
+        <div class="quick" id="product-quick"></div>
+        <input type="search" placeholder="Код или название, напр. 0713 или peas…" data-search autocomplete="off">
+        <div class="chips" data-chips></div>
+        <div class="options" data-options></div>
+        <p class="hint" id="product-hint"></p>
+      </div>
+
+      <div class="picker" id="picker-partner" data-kind="partner">
+        <div class="picker-head">
+          <label>Партнёр</label>
+          <span class="count" data-count>0 выбрано</span>
+        </div>
+        <input type="search" placeholder="Поиск партнёра…" data-search autocomplete="off">
+        <div class="chips" data-chips></div>
+        <div class="options" data-options></div>
+      </div>
+    </section>
+
+    <section class="panel period-panel">
+      <div class="field">
+        <label for="periodFrom">Период с</label>
+        <select id="periodFrom"></select>
+      </div>
+      <div class="field">
+        <label for="periodTo">Период по</label>
+        <select id="periodTo"></select>
+      </div>
+      <p class="hint" id="period-hint"></p>
+      <p class="hint" id="plan-hint"></p>
+      <div class="actions">
+        <button id="btn-run" class="btn btn-primary">Показать</button>
+        <button id="btn-export" class="btn btn-accent" disabled>Скачать Excel</button>
+      </div>
+    </section>
+
+    <div id="messages"></div>
+
+    <section class="panel result" id="result-panel" hidden>
+      <div class="result-head">
+        <h2 id="result-title">Результат</h2>
+        <span class="muted" id="result-meta"></span>
+      </div>
+      <div class="table-scroll">
+        <table id="result-table"></table>
+      </div>
+    </section>
+  </main>
+
+  <footer class="muted">
+    Данные: ITC Trade Map. Инструмент работает от вашей учётной записи;
+    месячные ряды требуют входа, годовые и квартальные доступны без него.
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
