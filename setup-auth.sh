@@ -33,8 +33,12 @@ if [ ${#PASSWORD} -lt 8 ]; then
   exit 1
 fi
 
+# Алгоритм задаём явно: hash-password умеет ещё и argon2id, а директива
+# basic_auth в Caddyfile по умолчанию ожидает именно bcrypt. При расхождении
+# вход просто не пускал бы, без внятной причины.
 echo "==> Считаю bcrypt-хеш..."
-HASH="$(docker run --rm caddy:2-alpine caddy hash-password --plaintext "$PASSWORD")"
+HASH="$(docker run --rm caddy:2-alpine caddy hash-password \
+  --algorithm bcrypt --plaintext "$PASSWORD")"
 
 # Экранируем $ -> $$ для docker compose.
 ESCAPED="${HASH//\$/\$\$}"
