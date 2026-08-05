@@ -9,11 +9,6 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if ! command -v docker >/dev/null 2>&1; then
-  echo "Нужен docker — он используется для генерации хеша." >&2
-  exit 1
-fi
-
 if [ ! -f .env ]; then
   echo "==> .env не найден, создаю из .env.example"
   cp .env.example .env
@@ -33,12 +28,35 @@ if [ ${#PASSWORD} -lt 8 ]; then
   exit 1
 fi
 
-# Алгоритм задаём явно: hash-password умеет ещё и argon2id, а директива
-# basic_auth в Caddyfile по умолчанию ожидает именно bcrypt. При расхождении
-# вход просто не пускал бы, без внятной причины.
+# Хеш считаем локально через htpasswd: Docker Hub ограничивает анонимные
+# загрузки образов, и на сервере легко упереться в «429 Too Many Requests»
+# ровно на этом шаге. Сеть здесь не нужна вовсе.
+#
+# Алгоритм фиксируем явно (-B = bcrypt, -C 14 = стоимость): директива
+# basic_auth в Caddyfile по умолчанию ожидает именно bcrypt, а caddy
+# hash-password умеет отдавать ещё и argon2id — при расхождении вход
+# не пускал бы без внятной причины.
 echo "==> Считаю bcrypt-хеш..."
-HASH="$(docker run --rm caddy:2-alpine caddy hash-password \
-  --algorithm bcrypt --plaintext "$PASSWORD")"
+
+if command -v htpasswd >/dev/null 2>&1; then
+  RAW="$(htpasswd -bnBC 14 "" "$PASSWORD" | tr -d ':\n')"
+  # htpasswd помечает хеш префиксом $2y$, Caddy привычнее $2a$.
+  # Алгоритм один и тот же, отличается только маркер версии.
+  HASH="$(printf '%s' "$RAW" | sed 's/^\$2y\$/\$2a\$/')"
+elif command -v docker >/dev/null 2>&1; then
+  echo "    htpasswd не найден, пробую через docker..."
+  HASH="$(docker run --rm caddy:2-alpine caddy hash-password \
+    --algorithm bcrypt --plaintext "$PASSWORD")"
+else
+  echo "Нужен htpasswd. Установите его:" >&2
+  echo "  sudo apt-get install -y apache2-utils" >&2
+  exit 1
+fi
+
+case "$HASH" in
+  \$2*\$*\$*) : ;;   # ожидаемый вид bcrypt-хеша
+  *) echo "Получился неожиданный хеш: ${HASH:0:20}..." >&2; exit 1 ;;
+esac
 
 # Экранируем $ -> $$ для docker compose.
 ESCAPED="${HASH//\$/\$\$}"

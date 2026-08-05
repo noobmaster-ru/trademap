@@ -121,10 +121,13 @@ git clone https://<токен>@github.com/noobmaster-ru/trademap.git /opt/tradem
 
 ```bash
 cd /opt/trademap
+sudo apt-get install -y apache2-utils   # даёт htpasswd, если его ещё нет
 ./setup-auth.sh
 ```
 
 Скрипт спросит логин и пароль, посчитает bcrypt-хеш и запишет его в `.env`.
+Считает локально, через `htpasswd` — в сеть не ходит, поэтому лимиты
+Docker Hub на этом шаге не мешают.
 
 > **Почему не вручную.** Bcrypt-хеш выглядит как `$2a$14$Zx9k...`, а docker
 > compose трактует `$` в `.env` как подстановку переменной. Вставленный как есть,
@@ -268,3 +271,31 @@ docker compose exec app python -m app.auth --check
 
 **403 «You have been blacklisted».** Это TradeMap, не ваш сервер. Только ждать;
 затем дробить выгрузки на части.
+
+**`429 Too Many Requests` при загрузке образов.** Docker Hub ограничивает
+анонимные загрузки по IP, и на VPS этот лимит часто уже исчерпан соседями.
+Ошибка выглядит так:
+
+```
+failed to resolve reference "docker.io/library/caddy:2-alpine":
+unexpected status from HEAD request ...: 429 Too Many Requests
+```
+
+Три способа обойти, по возрастанию усилий:
+
+1. **Войти в Docker Hub** — авторизованным даётся заметно больший лимит.
+   Бесплатной учётной записи достаточно:
+   ```bash
+   docker login
+   ```
+2. **Подключить зеркало** — учётная запись не нужна:
+   ```bash
+   sudo mkdir -p /etc/docker
+   echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee /etc/docker/daemon.json
+   sudo systemctl restart docker
+   docker compose up -d --build
+   ```
+3. **Просто подождать** — лимит восстанавливается сам в течение нескольких часов.
+
+Генерации пароля это не касается: `setup-auth.sh` считает хеш локально через
+`htpasswd` и в сеть не ходит.
