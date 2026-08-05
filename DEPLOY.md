@@ -94,14 +94,24 @@ sudo ufw status
 
 ## 4. Загрузка проекта на сервер
 
-С локальной машины:
+На сервере:
 
 ```bash
-rsync -av --exclude .venv --exclude .cache --exclude .env \
-  ~/Desktop/trademap/ user@server:/opt/trademap/
+sudo mkdir -p /opt/trademap
+sudo chown $USER:$USER /opt/trademap
+git clone https://github.com/noobmaster-ru/trademap.git /opt/trademap
+cd /opt/trademap
 ```
 
-`.env` намеренно исключён — секреты заполняются прямо на сервере.
+Для приватного репозитория понадобится доступ — проще всего через
+personal access token:
+
+```bash
+git clone https://<токен>@github.com/noobmaster-ru/trademap.git /opt/trademap
+```
+
+`.env` в репозитории нет и быть не должно — он в `.gitignore`, а секреты
+заполняются прямо на сервере на следующем шаге.
 
 ---
 
@@ -185,13 +195,16 @@ docker compose up -d --build        # обновить после правки �
 docker compose pull && docker compose up -d   # обновить Caddy
 ```
 
-Обновление кода с локальной машины:
+Обновление кода (после `git push` с локальной машины):
 
 ```bash
-rsync -av --exclude .venv --exclude .cache --exclude .env \
-  ~/Desktop/trademap/ user@server:/opt/trademap/
-ssh user@server 'cd /opt/trademap && docker compose up -d --build'
+ssh user@server
+cd /opt/trademap
+git pull
+docker compose up -d --build
 ```
+
+`git pull` не тронет `.env` — он не отслеживается.
 
 Токен и кэш справочников лежат в томе `trademap-data` и переживают пересборку.
 Сбросить их:

@@ -61,7 +61,7 @@ TRADEMAP_PASSWORD=ваш-пароль
 
 ```
 TRADEMAP_PRODUCT_ROOT=0713
-TRADEMAP_PRODUCT_EXTRA_MAX=4
+TRADEMAP_PRODUCT_EXTRA_MAX=6
 ```
 
 Уровни внутри ветки:
@@ -177,4 +177,3 @@ app/
 
 Данные принадлежат ITC Trade Map; их использование регулируется
 [Terms & Conditions](https://www.trademap.org) сайта.
-# trademap
