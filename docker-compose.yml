@@ -15,6 +15,11 @@ services:
       # чтобы локальный запуск через ./run.sh не ломался.
       TRADEMAP_CACHE_DIR: /data
       TRADEMAP_ALLOW_BROWSER_LOGIN: "0"
+      # На сервере вход в приложение обязателен — без этих трёх переменных
+      # страница была бы открыта всему интернету, поэтому compose не стартует.
+      TRADEMAP_APP_USER: ${TRADEMAP_APP_USER:?запустите ./setup-auth.sh}
+      TRADEMAP_APP_PASSWORD_HASH: ${TRADEMAP_APP_PASSWORD_HASH:?запустите ./setup-auth.sh}
+      TRADEMAP_SESSION_SECRET: ${TRADEMAP_SESSION_SECRET:?запустите ./setup-auth.sh}
     volumes:
       # Токен и кэш справочников переживают пересборку контейнера.
       - trademap-data:/data
@@ -38,10 +43,7 @@ services:
       # тогда как curl продолжает работать по TCP.
       - "443:443/udp"
     environment:
-      # Подставляются из .env: домен и хеш пароля от caddy hash-password.
       TRADEMAP_DOMAIN: ${TRADEMAP_DOMAIN:?укажите TRADEMAP_DOMAIN в .env}
-      TRADEMAP_BASICAUTH_USER: ${TRADEMAP_BASICAUTH_USER:?укажите TRADEMAP_BASICAUTH_USER в .env}
-      TRADEMAP_BASICAUTH_HASH: ${TRADEMAP_BASICAUTH_HASH:?укажите TRADEMAP_BASICAUTH_HASH в .env}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

@@ -6,18 +6,53 @@ import urllib.parse
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, Form, HTTPException, Query, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, excel, query, reference
+from . import config, excel, query, reference, webauth
 from .auth import AuthError, token_provider
 from .client import TradeMapError
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="TradeMap Explorer", docs_url=None, redoc_url=None)
+
+# Вход в приложение. Middleware пускает дальше только со свежей сессией;
+# если логин не настроен (локальный запуск), он просто пропускает всё.
+app.middleware("http")(webauth.auth_middleware)
+
+
+@app.get("/login")
+async def login_form(request: Request):
+    if webauth.current_user(request) is not None:
+        return RedirectResponse("/", status_code=303)
+    return webauth.login_page()
+
+
+@app.post("/login")
+async def login_submit(
+    username: str = Form(...),
+    password: str = Form(...),
+    next: str = Form("/"),
+):
+    if not (webauth.verify_user(username) and webauth.verify_password(password)):
+        return RedirectResponse("/login?error=1", status_code=303)
+
+    # Возвращаем только на внутренние пути: иначе форму можно было бы
+    # использовать как открытый редирект на чужой сайт.
+    target = next if next.startswith("/") and not next.startswith("//") else "/"
+    response = RedirectResponse(target, status_code=303)
+    webauth.issue_session(response, username)
+    return response
+
+
+@app.post("/logout")
+async def logout():
+    response = RedirectResponse("/login", status_code=303)
+    webauth.clear_session(response)
+    return response
 
 
 # --- Модели запроса ---------------------------------------------------------
@@ -117,8 +152,12 @@ async def ref_periods(frequency: str, first: int, last: int):
 # --- Авторизация ------------------------------------------------------------
 
 @app.get("/api/auth/status")
-async def auth_status():
-    return token_provider.status()
+async def auth_status(request: Request):
+    return {
+        **token_provider.status(),
+        "appUser": webauth.current_user(request),
+        "appAuthEnabled": config.auth_enabled(),
+    }
 
 
 @app.get("/health")

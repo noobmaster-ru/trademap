@@ -63,6 +63,10 @@ function formatNumber(value) {
 
 async function api(path, options = {}) {
   const resp = await fetch(path, options);
+  if (resp.status === 401 && !path.startsWith('/api/auth/')) {
+    location.href = '/login';
+    throw new Error('Сессия истекла');
+  }
   if (!resp.ok) {
     let detail = `HTTP ${resp.status}`;
     try {
@@ -685,18 +689,30 @@ function renderAuth(status) {
   const badge = $('#auth-state');
   const button = $('#btn-login');
 
+  // Кто вошёл в само приложение (отдельно от учётной записи TradeMap).
+  const logout = $('#logout-form');
+  if (status.appAuthEnabled && status.appUser) {
+    $('#app-user').textContent = status.appUser;
+    logout.hidden = false;
+  } else {
+    logout.hidden = true;
+  }
+
+  // Формулировки намеренно разведены: этот бейдж — про подключение к TradeMap,
+  // а кнопка «Выйти» рядом — про выход из самого приложения. Иначе «Войти»
+  // и «Выйти» стоят рядом и читаются как пара, хотя относятся к разному.
   if (status.authenticated) {
     badge.className = 'badge badge-ok';
     const minutes = Math.round(status.expiresIn / 60);
-    badge.textContent = `вход выполнен · ${minutes} мин`;
+    badge.textContent = `TradeMap: подключено · ${minutes} мин`;
     button.hidden = true;
   } else {
     badge.className = 'badge badge-warn';
-    badge.textContent = 'без входа — месячные данные закрыты';
+    badge.textContent = 'TradeMap: нет подключения — месячные данные закрыты';
     // На сервере окна браузера нет — предлагать этот путь бессмысленно.
     const canBrowser = status.browserLoginAvailable !== false;
     button.hidden = !status.hasCredentials && !canBrowser;
-    button.textContent = status.hasCredentials || !canBrowser ? 'Войти' : 'Войти через браузер';
+    button.textContent = 'Подключить TradeMap';
   }
   state.browserLoginAvailable = status.browserLoginAvailable !== false;
 }
@@ -728,7 +744,7 @@ async function login() {
     }
     if (!status.ok) throw new Error(body.detail);
     renderAuth(body);
-    showMessage('info', 'Вход выполнен — месячные данные доступны.');
+    showMessage('info', 'TradeMap подключён — месячные данные доступны.');
   } catch (error) {
     showMessage('error', error.message);
   } finally {

@@ -17,8 +17,12 @@
       </div>
     </div>
     <div id="auth-box" class="auth-box">
-      <span id="auth-state" class="badge badge-muted">проверяю вход…</span>
+      <span id="auth-state" class="badge badge-muted">проверяю подключение…</span>
       <button id="btn-login" class="btn btn-ghost" hidden>Войти</button>
+      <form method="post" action="/logout" id="logout-form" hidden>
+        <span class="who" id="app-user"></span>
+        <button type="submit" class="btn btn-ghost">Выйти</button>
+      </form>
     </div>
   </header>
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Генерирует хеш пароля для входа в приложение и записывает его в .env.
+# Настраивает вход в приложение: логин, хеш пароля и ключ подписи сессии.
+# Всё записывается в .env.
 #
 # Зачем отдельный скрипт: bcrypt-хеш содержит символы «$», а docker compose
 # трактует их в .env как подстановку переменных. Хеш $2a$14$Zx9k... превратился
@@ -72,18 +73,29 @@ set_var() {
   fi
 }
 
-set_var TRADEMAP_BASICAUTH_USER "$USER_NAME"
-set_var TRADEMAP_BASICAUTH_HASH "$ESCAPED"
+set_var TRADEMAP_APP_USER "$USER_NAME"
+set_var TRADEMAP_APP_PASSWORD_HASH "$ESCAPED"
+
+# Ключом подписывается cookie сессии. Меняется только по необходимости:
+# новый ключ разлогинивает всех, поэтому существующий не трогаем.
+if ! grep -qE "^TRADEMAP_SESSION_SECRET=.+" .env; then
+  SECRET="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  set_var TRADEMAP_SESSION_SECRET "$SECRET"
+  echo "==> Сгенерирован ключ подписи сессии"
+else
+  echo "==> Ключ подписи сессии уже есть, оставляю прежний"
+fi
 
 chmod 600 .env
 
 echo
 echo "Готово. В .env записано:"
-echo "  TRADEMAP_BASICAUTH_USER=$USER_NAME"
-echo "  TRADEMAP_BASICAUTH_HASH=${ESCAPED:0:12}... (символы \$ экранированы как \$\$ — так и должно быть)"
+echo "  TRADEMAP_APP_USER=$USER_NAME"
+echo "  TRADEMAP_APP_PASSWORD_HASH=${ESCAPED:0:12}... (символы \$ экранированы как \$\$ — так и должно быть)"
+echo "  TRADEMAP_SESSION_SECRET=... (ключ подписи cookie)"
 echo
 echo "Проверить, что compose видит хеш целиком:"
-echo "  docker compose config | grep BASICAUTH_HASH"
+echo "  docker compose config | grep APP_PASSWORD_HASH"
 echo
 echo "Дальше: заполните в .env домен и учётную запись TradeMap, затем"
 echo "  docker compose up -d --build"

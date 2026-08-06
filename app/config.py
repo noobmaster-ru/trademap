@@ -75,6 +75,26 @@ REFERENCE_CACHE_DIR = CACHE_DIR / "reference"
 # его в интерфейсе бессмысленно, а попытка запуска просто повесит запрос.
 ALLOW_BROWSER_LOGIN = os.getenv("TRADEMAP_ALLOW_BROWSER_LOGIN", "1").strip() != "0"
 
+
+# --- Вход в само приложение -------------------------------------------------
+# Это отдельная от TradeMap защита: она решает, кого пускать на страницу.
+#
+# Если хеш пароля не задан, вход не спрашивается — так удобно работать локально
+# через ./run.sh. На сервере переменные обязательны, за этим следит
+# docker-compose.yml.
+APP_USER = os.getenv("TRADEMAP_APP_USER", "").strip()
+APP_PASSWORD_HASH = os.getenv("TRADEMAP_APP_PASSWORD_HASH", "").strip()
+
+# Ключ подписи cookie сессии. Пустой означает «логин не настроен».
+SESSION_SECRET = os.getenv("TRADEMAP_SESSION_SECRET", "").strip()
+
+# Сколько живёт сессия без повторного входа.
+SESSION_MAX_AGE_SEC = int(os.getenv("TRADEMAP_SESSION_MAX_AGE", str(14 * 24 * 3600)))
+
+
+def auth_enabled() -> bool:
+    return bool(APP_USER and APP_PASSWORD_HASH and SESSION_SECRET)
+
 # Справочники меняются редко — держим сутки.
 REFERENCE_TTL_SEC = 24 * 3600
 
