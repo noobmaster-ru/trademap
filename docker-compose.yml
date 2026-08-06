@@ -32,6 +32,11 @@ services:
     ports:
       - "80:80"
       - "443:443"
+      # UDP обязателен: Caddy объявляет заголовком alt-svc поддержку HTTP/3
+      # (QUIC поверх UDP 443). Без этого проброса браузер после первого ответа
+      # переключается на HTTP/3, не достучивается и падает с ERR_TOO_MANY_RETRIES,
+      # тогда как curl продолжает работать по TCP.
+      - "443:443/udp"
     environment:
       # Подставляются из .env: домен и хеш пароля от caddy hash-password.
       TRADEMAP_DOMAIN: ${TRADEMAP_DOMAIN:?укажите TRADEMAP_DOMAIN в .env}
