@@ -14,7 +14,6 @@ const state = {
   selected: { country: [], product: [], partner: [WORLD] },
   periods: [],
   lastPayload: null,
-  browserLoginAvailable: true,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -687,34 +686,24 @@ async function exportExcel() {
 
 function renderAuth(status) {
   const badge = $('#auth-state');
-  const button = $('#btn-login');
 
-  // Кто вошёл в само приложение (отдельно от учётной записи TradeMap).
-  const logout = $('#logout-form');
-  if (status.appAuthEnabled && status.appUser) {
+  // Вход в приложение и есть вход в TradeMap, поэтому состояние одно.
+  if (status.appUser) {
     $('#app-user').textContent = status.appUser;
-    logout.hidden = false;
-  } else {
-    logout.hidden = true;
+    $('#logout-form').hidden = false;
   }
 
-  // Формулировки намеренно разведены: этот бейдж — про подключение к TradeMap,
-  // а кнопка «Выйти» рядом — про выход из самого приложения. Иначе «Войти»
-  // и «Выйти» стоят рядом и читаются как пара, хотя относятся к разному.
   if (status.authenticated) {
     badge.className = 'badge badge-ok';
-    const minutes = Math.round(status.expiresIn / 60);
-    badge.textContent = `TradeMap: подключено · ${minutes} мин`;
-    button.hidden = true;
+    badge.textContent = 'TradeMap подключён';
+  } else if (status.canRefresh) {
+    // Токен доступа протух, но refresh ещё есть — обновится при первом запросе.
+    badge.className = 'badge badge-ok';
+    badge.textContent = 'TradeMap подключён';
   } else {
     badge.className = 'badge badge-warn';
-    badge.textContent = 'TradeMap: нет подключения — месячные данные закрыты';
-    // На сервере окна браузера нет — предлагать этот путь бессмысленно.
-    const canBrowser = status.browserLoginAvailable !== false;
-    button.hidden = !status.hasCredentials && !canBrowser;
-    button.textContent = 'Подключить TradeMap';
+    badge.textContent = 'сессия TradeMap истекла — войдите заново';
   }
-  state.browserLoginAvailable = status.browserLoginAvailable !== false;
 }
 
 async function refreshAuth() {
@@ -722,34 +711,6 @@ async function refreshAuth() {
     renderAuth(await api('/api/auth/status'));
   } catch (_) {
     $('#auth-state').textContent = 'статус входа неизвестен';
-  }
-}
-
-async function login() {
-  const button = $('#btn-login');
-  const original = button.textContent;
-  button.disabled = true;
-  button.textContent = 'Вхожу…';
-  clearMessages();
-
-  try {
-    // Сначала пробуем без браузера (логин/пароль из .env либо refresh-токен).
-    let status = await fetch('/api/auth/login?useBrowser=false', { method: 'POST' });
-    let body = await status.json();
-
-    if (!status.ok && state.browserLoginAvailable) {
-      showMessage('info', `${body.detail}\nОткрываю окно браузера для входа…`);
-      status = await fetch('/api/auth/login?useBrowser=true', { method: 'POST' });
-      body = await status.json();
-    }
-    if (!status.ok) throw new Error(body.detail);
-    renderAuth(body);
-    showMessage('info', 'TradeMap подключён — месячные данные доступны.');
-  } catch (error) {
-    showMessage('error', error.message);
-  } finally {
-    button.disabled = false;
-    button.textContent = original;
   }
 }
 
@@ -766,7 +727,7 @@ async function init() {
     pickers.country.refresh();
     pickers.partner.refresh();
     $('#frequency-hint').textContent =
-      value === 'monthly' ? 'Месячные ряды требуют входа в TradeMap.' : 'Доступно без входа.';
+      value === 'monthly' ? 'Месячные ряды доступны по вашей учётной записи.' : '';
     refreshPeriodRange();
   });
   initSegmented('tradeFlow', (value) => { state.tradeFlow = value; });
@@ -780,9 +741,8 @@ async function init() {
   }
   $('#btn-run').addEventListener('click', runQuery);
   $('#btn-export').addEventListener('click', exportExcel);
-  $('#btn-login').addEventListener('click', login);
   $('#currency').value = 'USD';
-  $('#frequency-hint').textContent = 'Месячные ряды требуют входа в TradeMap.';
+  $('#frequency-hint').textContent = 'Месячные ряды доступны по вашей учётной записи.';
 
   refreshAuth();
 

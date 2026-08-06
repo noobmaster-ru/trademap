@@ -200,13 +200,17 @@ def _records_to_cells(
             )
 
 
-async def run(spec: QuerySpec) -> Dataset:
-    """Выполняет все запросы разворота и собирает их в один датасет."""
+async def run(spec: QuerySpec, tokens=None) -> Dataset:
+    """Выполняет все запросы разворота и собирает их в один датасет.
+
+    tokens — провайдер токенов вошедшего пользователя; нужен для месячных
+    рядов и национальных кодов, остальное API отдаёт анонимно.
+    """
     spec.validate()
     tasks = spec.tasks()
     warnings: list[str] = []
 
-    async with TradeMapClient() as client:
+    async with TradeMapClient(tokens) as client:
 
         async def fetch(task: dict) -> tuple[dict, dict] | None:
             try:

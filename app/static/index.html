@@ -17,8 +17,7 @@
       </div>
     </div>
     <div id="auth-box" class="auth-box">
-      <span id="auth-state" class="badge badge-muted">проверяю подключение…</span>
-      <button id="btn-login" class="btn btn-ghost" hidden>Войти</button>
+      <span id="auth-state" class="badge badge-muted">проверяю сессию…</span>
       <form method="post" action="/logout" id="logout-form" hidden>
         <span class="who" id="app-user"></span>
         <button type="submit" class="btn btn-ghost">Выйти</button>
@@ -159,8 +158,8 @@
   </main>
 
   <footer class="muted">
-    Данные: ITC Trade Map. Инструмент работает от вашей учётной записи;
-    месячные ряды требуют входа, годовые и квартальные доступны без него.
+    Данные: ITC Trade Map. Запросы выполняются от вашей учётной записи —
+    лимиты и доступ к месячным рядам зависят от неё.
   </footer>
 
   <script src="/static/app.js"></script>

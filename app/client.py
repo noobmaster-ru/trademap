@@ -13,7 +13,7 @@ from typing import Any, Optional
 import httpx
 
 from . import config
-from .auth import AuthError, token_provider
+from .auth import AuthError, TokenProvider
 
 FREQUENCIES = ("yearly", "quarterly", "monthly")
 OUTPUTS = ("byPartner", "byProduct", "byCountry")
@@ -56,7 +56,11 @@ class LoginRequiredError(TradeMapError):
 
 
 class TradeMapClient:
-    def __init__(self) -> None:
+    def __init__(self, tokens: Optional[TokenProvider] = None) -> None:
+        # Токен свой у каждого пользователя: он входит своей учётной записью
+        # TradeMap. Для справочников и годовых рядов провайдер не нужен —
+        # эти запросы API отдаёт анонимно.
+        self._tokens = tokens
         self._client: Optional[httpx.AsyncClient] = None
         self._semaphore = asyncio.Semaphore(config.MAX_CONCURRENCY)
         self._spacing_lock = asyncio.Lock()
@@ -103,15 +107,14 @@ class TradeMapClient:
     ) -> Any:
         headers: dict[str, str] = {}
         if needs_auth:
-            # allow_browser=False: окно браузера должно открываться только по
-            # явному нажатию «Войти», а не посреди обычной выгрузки данных.
-            try:
-                headers["Authorization"] = f"Bearer {await token_provider.get(allow_browser=False)}"
-            except AuthError as exc:
+            if self._tokens is None:
                 raise LoginRequiredError(
-                    f"Месячные данные требуют входа в TradeMap.\n{exc}\n"
-                    "Нажмите «Войти» вверху страницы или заполните .env."
-                ) from exc
+                    "Эти данные доступны только после входа в TradeMap."
+                )
+            try:
+                headers["Authorization"] = f"Bearer {await self._tokens.get()}"
+            except AuthError as exc:
+                raise LoginRequiredError(str(exc)) from exc
 
         last_error = ""
         async with self._semaphore:
@@ -131,12 +134,12 @@ class TradeMapClient:
                     if not needs_auth:
                         raise TradeMapError(_explain_401(resp))
                     # Токен мог протухнуть на лету — обновляем ровно один раз.
-                    if attempt == 0:
-                        token_provider.invalidate()
+                    if attempt == 0 and self._tokens is not None:
+                        self._tokens.invalidate()
                         try:
-                            token = await token_provider.get(allow_browser=False)
+                            token = await self._tokens.get()
                         except AuthError as exc:
-                            raise TradeMapError(str(exc)) from exc
+                            raise LoginRequiredError(str(exc)) from exc
                         headers["Authorization"] = f"Bearer {token}"
                         continue
                     raise TradeMapError(_explain_401(resp))
@@ -289,10 +292,7 @@ def _body_text(resp: httpx.Response) -> str:
 
 
 def _explain_401(resp: httpx.Response) -> str:
-    detail = _body_text(resp)
     return (
-        f"TradeMap требует вход: {detail}\n"
-        "Впишите TRADEMAP_USERNAME и TRADEMAP_PASSWORD в файл .env, "
-        "либо нажмите «Войти» в интерфейсе. "
-        "Годовые и квартальные ряды доступны и без входа."
+        f"TradeMap требует вход: {_body_text(resp)}\n"
+        "Выйдите и войдите заново — сессия могла истечь."
     )

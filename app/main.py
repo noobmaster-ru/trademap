@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, excel, query, reference, webauth
-from .auth import AuthError, token_provider
+from .auth import AuthError
 from .client import TradeMapError
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -33,25 +33,34 @@ async def login_form(request: Request):
 
 @app.post("/login")
 async def login_submit(
+    request: Request,
     username: str = Form(...),
     password: str = Form(...),
     next: str = Form("/"),
 ):
-    if not (webauth.verify_user(username) and webauth.verify_password(password)):
+    try:
+        user = await webauth.authenticate(username, password)
+    except AuthError as exc:
+        # Сервис недоступен или вход по паролю запрещён — это не «неверный
+        # пароль», и показывать надо именно причину.
+        return RedirectResponse(
+            f"/login?reason={urllib.parse.quote(str(exc)[:200])}", status_code=303
+        )
+    if user is None:
         return RedirectResponse("/login?error=1", status_code=303)
 
     # Возвращаем только на внутренние пути: иначе форму можно было бы
     # использовать как открытый редирект на чужой сайт.
     target = next if next.startswith("/") and not next.startswith("//") else "/"
     response = RedirectResponse(target, status_code=303)
-    webauth.issue_session(response, username)
+    webauth.issue_session(response, user, request_is_https=request.url.scheme == "https")
     return response
 
 
 @app.post("/logout")
-async def logout():
+async def logout(request: Request):
     response = RedirectResponse("/login", status_code=303)
-    webauth.clear_session(response)
+    webauth.clear_session(response, webauth.current_user(request))
     return response
 
 
@@ -153,31 +162,15 @@ async def ref_periods(frequency: str, first: int, last: int):
 
 @app.get("/api/auth/status")
 async def auth_status(request: Request):
-    return {
-        **token_provider.status(),
-        "appUser": webauth.current_user(request),
-        "appAuthEnabled": config.auth_enabled(),
-    }
+    user = webauth.current_user(request)
+    tokens = webauth.tokens_for(request)
+    return {**(tokens.status() if tokens else {}), "appUser": user}
 
 
 @app.get("/health")
 async def health():
     """Лёгкая проверка для Docker healthcheck — без обращений к TradeMap."""
     return {"status": "ok"}
-
-
-@app.post("/api/auth/login")
-async def auth_login(useBrowser: bool = False):
-    # На сервере окна браузера нет: запрос бы просто завис на пять минут.
-    allow_browser = useBrowser and config.ALLOW_BROWSER_LOGIN
-    try:
-        await token_provider.get(force_login=True, allow_browser=allow_browser)
-    except AuthError as exc:
-        return JSONResponse(
-            status_code=400,
-            content={"detail": str(exc), **token_provider.status()},
-        )
-    return token_provider.status()
 
 
 # --- Данные -----------------------------------------------------------------
@@ -224,18 +217,18 @@ def _preview(data: query.Dataset, limit: int = 200) -> dict:
 
 
 @app.post("/api/query")
-async def run_query(request: QueryRequest):
+async def run_query(request: QueryRequest, http_request: Request):
     try:
-        data = await query.run(request.to_spec())
+        data = await query.run(request.to_spec(), webauth.tokens_for(http_request))
     except (TradeMapError, AuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return _preview(data)
 
 
 @app.post("/api/export")
-async def export(request: QueryRequest):
+async def export(request: QueryRequest, http_request: Request):
     try:
-        data = await query.run(request.to_spec())
+        data = await query.run(request.to_spec(), webauth.tokens_for(http_request))
     except (TradeMapError, AuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

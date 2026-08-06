@@ -3,11 +3,6 @@ uvicorn[standard]>=0.32
 httpx>=0.27
 openpyxl>=3.1
 python-dotenv>=1.0
-bcrypt>=4.1
 itsdangerous>=2.2
 # Разбор данных формы входа (Form(...)) в FastAPI.
 python-multipart>=0.0.9
-
-# Нужен только для запасного способа входа (браузерный OIDC-логин).
-# Если прямой логин по паролю работает, можно не устанавливать.
-playwright>=1.48

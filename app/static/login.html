@@ -52,6 +52,7 @@
       padding: 10px 12px; border-radius: 8px; margin-bottom: 18px; font-size: 13.5px;
     }
     .note { margin: 22px 0 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
+    .note a { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -62,14 +63,15 @@
     </div>
     <p class="sub">Торговая статистика ITC — выборка и выгрузка в Excel</p>
 
-    <div id="error" class="error" hidden>Неверный логин или пароль</div>
+    <div id="error" class="error" hidden></div>
 
     <form method="post" action="/login" autocomplete="on">
       <input type="hidden" name="next" id="next" value="/">
       <div class="field">
-        <label for="username">Логин</label>
-        <input type="text" id="username" name="username" required autofocus
-               autocomplete="username" spellcheck="false">
+        <label for="username">E-mail на trademap.org</label>
+        <input type="email" id="username" name="username" required autofocus
+               autocomplete="username" spellcheck="false"
+               placeholder="you@example.com">
       </div>
       <div class="field">
         <label for="password">Пароль</label>
@@ -80,15 +82,27 @@
     </form>
 
     <p class="note">
-      Это вход в сам инструмент. Учётная запись trademap.org настраивается
-      отдельно — приложение подключается к ней само.
+      Вход выполняется вашей учётной записью
+      <a href="https://www.trademap.org" target="_blank" rel="noopener">trademap.org</a>
+      — отдельной регистрации не требуется. Пароль нигде не сохраняется:
+      он сразу обменивается на токен доступа.
     </p>
   </main>
 
   <script>
     // Показываем ошибку и запоминаем, куда вернуться после входа.
     const params = new URLSearchParams(location.search);
-    if (params.get('error')) document.getElementById('error').hidden = false;
+    const box = document.getElementById('error');
+    // reason — это отказ самого сервиса, его нужно показать дословно:
+    // «неверный пароль» тут было бы враньём.
+    const reason = params.get('reason');
+    if (reason) {
+      box.textContent = reason;
+      box.hidden = false;
+    } else if (params.get('error')) {
+      box.textContent = 'TradeMap не принял эти e-mail и пароль';
+      box.hidden = false;
+    }
     const next = params.get('next');
     // Принимаем только внутренние пути — чтобы форму нельзя было использовать
     // как перенаправление на чужой сайт.

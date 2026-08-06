@@ -1,26 +1,24 @@
-"""Вход в само приложение: страница логина и сессия на подписанной cookie.
+"""Вход в приложение — он же вход в TradeMap.
 
-Это отдельный слой от авторизации в TradeMap. Он решает, кого пускать на
-страницу, и не имеет отношения к учётной записи trademap.org.
+Своей базы пользователей у инструмента нет: логин и пароль проверяются прямо
+в TradeMap, и пускаем тех, кого пускает он. Пароль после проверки нигде не
+сохраняется — сразу меняется на токены.
 
-Если TRADEMAP_APP_USER / TRADEMAP_APP_PASSWORD_HASH / TRADEMAP_SESSION_SECRET
-не заданы, вход не спрашивается — так удобно работать локально через ./run.sh.
-На сервере эти переменные обязательны, за этим следит docker-compose.yml.
+В cookie лежит только имя пользователя, подписанное ключом сессии.
 """
 
 from __future__ import annotations
 
-import hmac
 import time
 from pathlib import Path
 from typing import Optional
 
-import bcrypt
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from starlette.requests import Request
 from starlette.responses import FileResponse, RedirectResponse, Response
 
 from . import config
+from .auth import AuthError, InvalidCredentials, TokenProvider, token_registry
 
 COOKIE_NAME = "trademap_session"
 STATIC_DIR = Path(__file__).parent / "static"
@@ -30,24 +28,33 @@ PUBLIC_PATHS = {"/login", "/health", "/static/login.css", "/favicon.ico"}
 
 
 def _serializer() -> URLSafeTimedSerializer:
-    return URLSafeTimedSerializer(config.SESSION_SECRET, salt="trademap-login")
+    return URLSafeTimedSerializer(config.session_secret(), salt="trademap-login")
 
 
-def verify_password(password: str) -> bool:
-    """Проверяет пароль против bcrypt-хеша из .env."""
+async def authenticate(username: str, password: str) -> Optional[str]:
+    """Проверяет учётные данные в TradeMap.
+
+    Возвращает имя пользователя при успехе и None, если TradeMap их отверг.
+    Ошибки самого сервиса (недоступен, грант запрещён) пробрасываются наверх:
+    их нельзя показывать как «неверный пароль».
+    """
+    username = username.strip()
+    if not username or not password:
+        return None
     try:
-        return bcrypt.checkpw(password.encode(), config.APP_PASSWORD_HASH.encode())
-    except (ValueError, TypeError):
-        # Битый или пустой хеш — считаем, что пароль не подошёл, но не падаем.
-        return False
+        await token_registry.for_user(username).login(password)
+    except InvalidCredentials:
+        return None
+    return username
 
 
-def verify_user(username: str) -> bool:
-    # Сравнение в постоянном времени: имя пользователя тоже секрет, пусть и слабый.
-    return hmac.compare_digest(username.strip(), config.APP_USER)
+def tokens_for(request: Request) -> Optional[TokenProvider]:
+    """Провайдер токенов вошедшего пользователя."""
+    user = current_user(request)
+    return token_registry.for_user(user) if user else None
 
 
-def issue_session(response: Response, username: str) -> None:
+def issue_session(response: Response, username: str, *, request_is_https: bool) -> None:
     token = _serializer().dumps({"u": username, "t": int(time.time())})
     response.set_cookie(
         COOKIE_NAME,
@@ -57,18 +64,21 @@ def issue_session(response: Response, username: str) -> None:
         samesite="lax",
         # Secure нельзя включать безусловно: локально приложение работает по http,
         # и браузер просто выбросил бы cookie.
-        secure=not config.ALLOW_BROWSER_LOGIN,
+        # Secure только по HTTPS: локально приложение работает по http,
+        # и браузер просто выбросил бы такую cookie.
+        secure=request_is_https,
         path="/",
     )
 
 
-def clear_session(response: Response) -> None:
+def clear_session(response: Response, username: Optional[str]) -> None:
     response.delete_cookie(COOKIE_NAME, path="/")
+    if username:
+        # Вместе с сессией забываем и токены TradeMap этого пользователя.
+        token_registry.forget(username)
 
 
 def current_user(request: Request) -> Optional[str]:
-    if not config.auth_enabled():
-        return config.APP_USER or "local"
     token = request.cookies.get(COOKIE_NAME)
     if not token:
         return None
@@ -89,7 +99,7 @@ async def auth_middleware(request: Request, call_next):
     Страницы отправляются на форму входа, запросы к /api/ получают 401 —
     иначе фронтенд получил бы HTML вместо JSON и показал невнятную ошибку.
     """
-    if not config.auth_enabled() or is_public(request.url.path):
+    if is_public(request.url.path):
         return await call_next(request)
 
     if current_user(request) is not None:

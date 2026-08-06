@@ -1,8 +1,8 @@
-# TradeMap Explorer за Caddy: HTTPS с автоматическим сертификатом Let's Encrypt
-# и базовая авторизация. Наружу торчит только Caddy, само приложение доступно
-# лишь внутри docker-сети.
+# TradeMap Explorer за Caddy: HTTPS с автоматическим сертификатом Let's Encrypt.
+# Наружу торчит только Caddy, само приложение доступно лишь внутри docker-сети.
 #
-# Перед первым запуском заполните .env (см. .env.example и раздел «Деплой» в README).
+# Вход закрыт страницей логина: пользователь входит своей учётной записью
+# TradeMap, поэтому никаких паролей в .env задавать не нужно — только домен.
 
 services:
   app:
@@ -14,12 +14,6 @@ services:
       # Пути и режим внутри контейнера задаются здесь, а не в .env,
       # чтобы локальный запуск через ./run.sh не ломался.
       TRADEMAP_CACHE_DIR: /data
-      TRADEMAP_ALLOW_BROWSER_LOGIN: "0"
-      # На сервере вход в приложение обязателен — без этих трёх переменных
-      # страница была бы открыта всему интернету, поэтому compose не стартует.
-      TRADEMAP_APP_USER: ${TRADEMAP_APP_USER:?запустите ./setup-auth.sh}
-      TRADEMAP_APP_PASSWORD_HASH: ${TRADEMAP_APP_PASSWORD_HASH:?запустите ./setup-auth.sh}
-      TRADEMAP_SESSION_SECRET: ${TRADEMAP_SESSION_SECRET:?запустите ./setup-auth.sh}
     volumes:
       # Токен и кэш справочников переживают пересборку контейнера.
       - trademap-data:/data

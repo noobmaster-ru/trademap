@@ -3,29 +3,25 @@
 Токен нужен только для месячных (monthly) данных: годовые и квартальные ряды
 API отдаёт анонимно.
 
-Каскад способов — от самого дешёвого к самому надёжному:
+Учётные данные вводит сам пользователь на форме входа — в приложении их нет
+и в .env они не нужны. Пароль сразу меняется на токены (grant_type=password)
+и нигде не сохраняется; на диск ложатся только access- и refresh-токены,
+по отдельному файлу на каждого пользователя.
 
-1. Кэш на диске (.cache/token.json, права 0600) — если access_token ещё жив.
-2. refresh_token — тихое обновление без участия пользователя.
-3. Прямой вход по логину/паролю (ROPC, grant_type=password). Сервер авторизации
-   объявляет поддержку этого гранта; разрешён ли он клиенту TradeMap — выясняется
-   на первой попытке и запоминается, чтобы не долбиться повторно.
-4. Браузерный вход (Playwright): полноценный authorization code + PKCE.
-   Открывается окно браузера, пользователь входит сам (это же переживёт капчу
-   и двухфакторку). Из ответа забираем refresh_token, дальше хватает п.2.
+Дальше токен обновляется сам по refresh_token, пока тот действует.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import base64
+import getpass
 import hashlib
 import json
 import os
-import secrets
 import time
 from dataclasses import dataclass, asdict
+from pathlib import Path
 from typing import Optional
 
 import httpx
@@ -35,6 +31,14 @@ from . import config
 
 class AuthError(RuntimeError):
     """Не удалось получить токен. Сообщение пригодно для показа пользователю."""
+
+
+class InvalidCredentials(AuthError):
+    """TradeMap отверг именно логин или пароль (а не сам способ входа).
+
+    Выделено отдельно, потому что на форме входа это единственный случай,
+    в котором нужно сказать «неверные данные», а не «сервис недоступен».
+    """
 
 
 @dataclass
@@ -54,18 +58,33 @@ class Token:
         return max(0, int(self.expires_at - time.time()))
 
 
-def _load_token() -> Optional[Token]:
+def _token_file(username: str) -> Path:
+    """Отдельный файл на каждого пользователя.
+
+    В имени — хеш логина, а не сам логин: так в кэше не лежит список того,
+    кто пользуется инструментом.
+    """
+    digest = hashlib.sha256(username.strip().lower().encode()).hexdigest()[:16]
+    return config.TOKEN_DIR / f"{digest}.json"
+
+
+def _load_token(username: str) -> Optional[Token]:
     try:
-        raw = json.loads(config.TOKEN_FILE.read_text())
+        raw = json.loads(_token_file(username).read_text())
         return Token(**raw)
     except (OSError, ValueError, TypeError):
         return None
 
 
-def _save_token(token: Token) -> None:
+def _save_token(username: str, token: Token) -> None:
     config.ensure_dirs()
-    config.TOKEN_FILE.write_text(json.dumps(asdict(token), indent=2))
-    os.chmod(config.TOKEN_FILE, 0o600)
+    path = _token_file(username)
+    path.write_text(json.dumps(asdict(token), indent=2))
+    os.chmod(path, 0o600)
+
+
+def _forget_token(username: str) -> None:
+    _token_file(username).unlink(missing_ok=True)
 
 
 def _token_from_response(payload: dict, via: str) -> Token:
@@ -106,15 +125,17 @@ async def _refresh(client: httpx.AsyncClient, refresh_token: str) -> Token:
     return _token_from_response(resp.json(), "refresh_token")
 
 
-async def _password_grant(client: httpx.AsyncClient) -> Token:
+async def _password_grant(
+    client: httpx.AsyncClient, username: str, password: str
+) -> Token:
     """Прямой вход по логину/паролю. Может быть запрещён для клиента TradeMap."""
     resp = await client.post(
         config.TOKEN_ENDPOINT,
         data={
             "grant_type": "password",
             "client_id": config.OIDC_CLIENT_ID,
-            "username": config.USERNAME,
-            "password": config.PASSWORD,
+            "username": username,
+            "password": password,
             "scope": config.OIDC_SCOPE,
         },
         headers={"Content-Type": "application/x-www-form-urlencoded"},
@@ -132,115 +153,25 @@ async def _password_grant(client: httpx.AsyncClient) -> Token:
         raise AuthError(f"Прямой вход по паролю запрещён для этого клиента ({err}).")
     if err == "invalid_grant":
         # Грант работает — значит, дело в самих учётных данных.
-        raise AuthError(
-            "TradeMap отклонил логин или пароль. Проверьте TRADEMAP_USERNAME "
-            "и TRADEMAP_PASSWORD в файле .env."
-        )
+        raise InvalidCredentials("TradeMap не принял эти логин и пароль.")
     raise AuthError(f"Вход не удался ({resp.status_code}): {err}")
 
 
-def _pkce_pair() -> tuple[str, str]:
-    verifier = base64.urlsafe_b64encode(secrets.token_bytes(64)).decode().rstrip("=")
-    digest = hashlib.sha256(verifier.encode()).digest()
-    challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-    return verifier, challenge
-
-
-async def _browser_login(client: httpx.AsyncClient) -> Token:
-    """Запасной путь: настоящий вход в браузере (authorization code + PKCE)."""
-    try:
-        from playwright.async_api import async_playwright
-    except ImportError as exc:  # pragma: no cover - зависит от окружения
-        raise AuthError(
-            "Для браузерного входа нужен Playwright. Установите его:\n"
-            "  .venv/bin/pip install playwright && .venv/bin/playwright install chromium"
-        ) from exc
-
-    verifier, challenge = _pkce_pair()
-    params = {
-        "client_id": config.OIDC_CLIENT_ID,
-        "redirect_uri": config.OIDC_REDIRECT_URI,
-        "response_type": "code",
-        "scope": config.OIDC_SCOPE,
-        "state": secrets.token_urlsafe(16),
-        "nonce": secrets.token_urlsafe(16),
-        "code_challenge": challenge,
-        "code_challenge_method": "S256",
-    }
-    authorize_url = str(httpx.URL(config.AUTHORIZE_ENDPOINT, params=params))
-
-    captured: dict[str, str] = {}
-
-    async with async_playwright() as pw:
-        browser = await pw.chromium.launch(headless=False)
-        page = await browser.new_page(user_agent=config.USER_AGENT)
-
-        async def intercept(route):
-            url = route.request.url
-            if "code=" in url:
-                captured["url"] = url
-                # Гасим переход, чтобы SPA не обменяла код раньше нас:
-                # одноразовый код можно использовать только один раз.
-                await route.abort()
-            else:
-                await route.continue_()
-
-        await page.route("**/auth-cb*", intercept)
-        await page.goto(authorize_url)
-
-        # Если креды заданы — заполняем форму, иначе пользователь вводит сам.
-        if config.has_credentials():
-            try:
-                await page.fill(
-                    "input[type=email], input[name*=sername], #Username",
-                    config.USERNAME,
-                    timeout=8000,
-                )
-                await page.fill("input[type=password]", config.PASSWORD, timeout=8000)
-                await page.click("button[type=submit], input[type=submit]", timeout=8000)
-            except Exception:
-                # Вёрстка формы входа может отличаться — просто отдаём управление
-                # пользователю, окно браузера уже открыто.
-                pass
-
-        deadline = time.time() + 300
-        while "url" not in captured and time.time() < deadline:
-            await asyncio.sleep(0.25)
-        await browser.close()
-
-    if "url" not in captured:
-        raise AuthError("Вход в браузере не был завершён за 5 минут.")
-
-    code = httpx.URL(captured["url"]).params.get("code")
-    if not code:
-        raise AuthError("Браузер вернулся без кода авторизации.")
-
-    resp = await client.post(
-        config.TOKEN_ENDPOINT,
-        data={
-            "grant_type": "authorization_code",
-            "client_id": config.OIDC_CLIENT_ID,
-            "code": code,
-            "redirect_uri": config.OIDC_REDIRECT_URI,
-            "code_verifier": verifier,
-        },
-        headers={"Content-Type": "application/x-www-form-urlencoded"},
-    )
-    if resp.status_code != 200:
-        raise AuthError(f"Обмен кода на токен не удался ({resp.status_code}): {resp.text[:200]}")
-    return _token_from_response(resp.json(), "browser")
-
-
 class TokenProvider:
-    """Отдаёт живой access_token, обновляя его по мере надобности."""
+    """Держит живой access_token одного пользователя TradeMap."""
 
-    def __init__(self) -> None:
-        self._token: Optional[Token] = _load_token()
+    def __init__(self, username: str) -> None:
+        self.username = username
+        self._token: Optional[Token] = _load_token(username)
         self._lock = asyncio.Lock()
 
     @property
     def cached(self) -> Optional[Token]:
         return self._token
+
+    @property
+    def has_token(self) -> bool:
+        return bool(self._token and (self._token.is_fresh or self._token.refresh_token))
 
     def status(self) -> dict:
         token = self._token
@@ -249,73 +180,105 @@ class TokenProvider:
             "expiresIn": token.expires_in if token else 0,
             "obtainedVia": token.obtained_via if token else None,
             "canRefresh": bool(token and token.refresh_token),
-            "hasCredentials": config.has_credentials(),
-            "browserLoginAvailable": config.ALLOW_BROWSER_LOGIN,
         }
 
-    async def get(self, *, force_login: bool = False, allow_browser: bool = True) -> str:
+    async def login(self, password: str) -> None:
+        """Меняет пароль на токены. Пароль после этого нигде не сохраняется."""
         async with self._lock:
-            if not force_login and self._token and self._token.is_fresh:
+            async with httpx.AsyncClient(
+                timeout=60, headers={"User-Agent": config.USER_AGENT}
+            ) as client:
+                self._token = await _password_grant(client, self.username, password)
+            _save_token(self.username, self._token)
+
+    async def get(self) -> str:
+        """Живой токен. Обновляется сам, пока действует refresh_token."""
+        async with self._lock:
+            if self._token and self._token.is_fresh:
                 return self._token.access_token
+
+            if not (self._token and self._token.refresh_token):
+                raise AuthError(
+                    "Сессия TradeMap истекла. Выйдите и войдите заново."
+                )
 
             async with httpx.AsyncClient(
                 timeout=60, headers={"User-Agent": config.USER_AGENT}
             ) as client:
-                errors: list[str] = []
-
-                if not force_login and self._token and self._token.refresh_token:
-                    try:
-                        self._token = await _refresh(client, self._token.refresh_token)
-                        _save_token(self._token)
-                        return self._token.access_token
-                    except AuthError as exc:
-                        errors.append(str(exc))
-
-                if config.has_credentials() and not _ropc_known_blocked():
-                    try:
-                        self._token = await _password_grant(client)
-                        _save_token(self._token)
-                        return self._token.access_token
-                    except AuthError as exc:
-                        errors.append(str(exc))
-                        if "логин или пароль" in str(exc):
-                            # Дальше в браузер идти бессмысленно — креды неверные.
-                            raise
-
-                if allow_browser:
-                    self._token = await _browser_login(client)
-                    _save_token(self._token)
-                    return self._token.access_token
-
-                if errors:
-                    raise AuthError(" | ".join(errors))
-                raise AuthError(
-                    "Входить нечем: в .env не заданы TRADEMAP_USERNAME и "
-                    "TRADEMAP_PASSWORD, сохранённого токена тоже нет."
-                )
+                try:
+                    self._token = await _refresh(client, self._token.refresh_token)
+                except AuthError as exc:
+                    # Refresh-токен отозван или протух — без пароля не восстановить.
+                    _forget_token(self.username)
+                    self._token = None
+                    raise AuthError(
+                        f"Сессия TradeMap истекла ({exc}). Выйдите и войдите заново."
+                    ) from exc
+            _save_token(self.username, self._token)
+            return self._token.access_token
 
     def invalidate(self) -> None:
         """Помечает токен протухшим — следующий запрос обновит его."""
         if self._token:
             self._token.expires_at = 0
 
+    def forget(self) -> None:
+        self._token = None
+        _forget_token(self.username)
 
-token_provider = TokenProvider()
+
+class TokenRegistry:
+    """По одному провайдеру на пользователя.
+
+    Каждый входит своей учётной записью TradeMap, поэтому общего токена быть
+    не может: и данные, и лимиты у аккаунтов разные.
+    """
+
+    def __init__(self) -> None:
+        self._providers: dict[str, TokenProvider] = {}
+
+    def for_user(self, username: str) -> TokenProvider:
+        key = username.strip().lower()
+        provider = self._providers.get(key)
+        if provider is None:
+            provider = TokenProvider(username.strip())
+            self._providers[key] = provider
+        return provider
+
+    def forget(self, username: str) -> None:
+        key = username.strip().lower()
+        provider = self._providers.pop(key, None)
+        if provider is not None:
+            provider.forget()
+
+
+token_registry = TokenRegistry()
+
+
+async def verify_credentials(username: str, password: str) -> TokenProvider:
+    """Проверяет пару логин/пароль прямо в TradeMap.
+
+    Это и есть вход в приложение: своей базы пользователей у него нет —
+    пускаем тех, кого пускает сам TradeMap.
+    """
+    provider = token_registry.for_user(username)
+    await provider.login(password)
+    return provider
 
 
 # --- Диагностика: python -m app.auth --check --------------------------------
 
-async def _check() -> int:
-    print(f"Учётные данные в .env: {'заданы' if config.has_credentials() else 'НЕ заданы'}")
-    print(f"Кэш токена: {config.TOKEN_FILE}")
+async def _check(username: str, password: str) -> int:
+    print(f"Пользователь: {username}")
+    print(f"Кэш токенов:  {config.TOKEN_DIR}")
 
     try:
-        access = await token_provider.get()
+        provider = await verify_credentials(username, password)
     except AuthError as exc:
-        print(f"\n[!] Токен получить не удалось: {exc}")
+        print(f"\n[!] Войти не удалось: {exc}")
         return 1
 
-    token = token_provider.cached
+    token = provider.cached
     assert token is not None
     print(f"Токен получен способом: {token.obtained_via}")
     print(f"Живёт ещё: {token.expires_in} с")
@@ -328,6 +291,7 @@ async def _check() -> int:
         "indicator": "VAL", "tradeFlow": "I", "directMirror": "D",
         "currency": "USD", "pageSize": 5,
     }
+    access = await provider.get()
     async with httpx.AsyncClient(timeout=60, headers={"User-Agent": config.USER_AGENT}) as client:
         resp = await client.get(url, params=params, headers={"Authorization": f"Bearer {access}"})
 
@@ -348,17 +312,26 @@ async def _check() -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Диагностика входа в TradeMap")
     parser.add_argument("--check", action="store_true", help="проверить вход и доступ к monthly")
-    parser.add_argument("--reset", action="store_true", help="удалить кэш токена и флаги")
+    parser.add_argument("--user", help="логин; по умолчанию берётся TRADEMAP_USERNAME из .env")
+    parser.add_argument("--reset", action="store_true", help="удалить кэш токенов и флаги")
     args = parser.parse_args()
 
     if args.reset:
-        for path in (config.TOKEN_FILE, _ROPC_BLOCKED_FILE):
+        for path in config.TOKEN_DIR.glob("*.json"):
             path.unlink(missing_ok=True)
-        print("Кэш токена очищен.")
+        _ROPC_BLOCKED_FILE.unlink(missing_ok=True)
+        print("Кэш токенов очищен.")
         if not args.check:
             return
 
-    raise SystemExit(asyncio.run(_check()))
+    username = args.user or config.USERNAME
+    if not username:
+        username = input("Логин TradeMap: ").strip()
+    password = config.PASSWORD if (username == config.USERNAME and config.PASSWORD) else ""
+    if not password:
+        password = getpass.getpass("Пароль TradeMap: ")
+
+    raise SystemExit(asyncio.run(_check(username, password)))
 
 
 if __name__ == "__main__":
